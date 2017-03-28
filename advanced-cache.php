@@ -69,6 +69,7 @@ class batcache {
 
 	var $cancel = false; // Change this to cancel the output buffer. Use batcache_cancel();
 
+    var $skip_cookies = array( 'wp', 'wordpress', 'comment_author' ); // Names of cookies (or prefixes) to skip
 	var $noskip_cookies = array( 'wordpress_test_cookie' ); // Names of cookies - if they exist and the cache would normally be bypassed, don't bypass it
 
 	var $query = '';
@@ -318,6 +319,24 @@ HTML;
 		}
 		$this->cache['output'] .= "\n$debug_html";
 	}
+    
+    function get_server_protocol() {
+		$protocol = $_SERVER["SERVER_PROTOCOL"];
+        
+    	if ( ! in_array( $protocol, array( 'HTTP/1.1', 'HTTP/2', 'HTTP/2.0' ) ) ) {
+    		$protocol = 'HTTP/1.0';
+    	}
+        
+        return $protocol;
+    }
+    
+    function in_skip_cookies( $cookie ) {
+        foreach ( $this->skip_cookies as $skip_cookie ) {
+            if ( substr( $cookie, 0, strlen( $skip_cookie ) ) == $skip_cookie ) {
+                return true;
+            }
+        }
+    }
 }
 
 global $batcache;
@@ -349,7 +368,7 @@ if ( ( isset( $_SERVER['REQUEST_METHOD'] ) && !in_array( $_SERVER['REQUEST_METHO
 // Never batcache when cookies indicate a cache-exempt visitor.
 if ( is_array( $_COOKIE ) && ! empty( $_COOKIE ) ) {
 	foreach ( array_keys( $_COOKIE ) as $batcache->cookie ) {
-		if ( ! in_array( $batcache->cookie, $batcache->noskip_cookies ) && ( substr( $batcache->cookie, 0, 2 ) == 'wp' || substr( $batcache->cookie, 0, 9 ) == 'wordpress' || substr( $batcache->cookie, 0, 14 ) == 'comment_author' ) ) {
+		if ( ! in_array( $batcache->cookie, $batcache->noskip_cookies ) && ! $batcache->in_skip_cookies( $batcache->cookie ) ) {
 			batcache_stats( 'batcache', 'cookie_skip' );
 			return;
 		}
@@ -405,14 +424,12 @@ $batcache->keys = array(
 	'method' => $_SERVER['REQUEST_METHOD'],
 	'path' => ( $batcache->pos = strpos($_SERVER['REQUEST_URI'], '?') ) ? substr($_SERVER['REQUEST_URI'], 0, $batcache->pos) : $_SERVER['REQUEST_URI'],
 	'query' => $batcache->query,
-	'extra' => $batcache->unique
+	'extra' => $batcache->unique,
+    'ssl' => $batcache->is_ssl()
 );
 
-if ( $batcache->is_ssl() )
-	$batcache->keys['ssl'] = true;
-
 // Recreate the permalink from the URL
-$batcache->permalink = 'http://' . $batcache->keys['host'] . $batcache->keys['path'] . ( isset( $batcache->keys['query']['p'] ) ? "?p=" . $batcache->keys['query']['p'] : '' );
+$batcache->permalink = ( $batcache->keys['ssl'] ? 'https://' : 'http://' ) . $batcache->keys['host'] . $batcache->keys['path'] . ( isset($batcache->keys['query']['p']) ? "?p=" . $batcache->keys['query']['p'] : '' );
 $batcache->url_key = md5( $batcache->permalink );
 $batcache->configure_groups();
 $batcache->url_version = (int) wp_cache_get( "{$batcache->url_key}_version", $batcache->group );
@@ -478,17 +495,14 @@ if ( isset( $batcache->cache['time'] ) && // We have cache
 					306 => 'Reserved',
 					307 => 'Temporary Redirect',
 				);
-				$protocol = $_SERVER["SERVER_PROTOCOL"];
-				if ( 'HTTP/1.1' != $protocol && 'HTTP/1.0' != $protocol )
-					$protocol = 'HTTP/1.0';
 				if ( isset( $texts[$status] ) )
-					header( "$protocol $status " . $texts[$status] );
+					header( $batcache->get_server_protocol() . " $status " . $texts[$status] );
 				else
-					header( "$protocol 302 Found" );
+					header( $batcache->get_server_protocol() . " 302 Found" );
 			}
 			header( "Location: $location" );
 		}
-		exit;
+		die;
 	}
 
 	// Respect ETags served with feeds.
@@ -522,7 +536,7 @@ if ( isset( $batcache->cache['time'] ) && // We have cache
 	$batcache->do_headers( $batcache->headers, $batcache->cache['headers'] );
 
 	if ( $three04 ) {
-		header( "HTTP/1.1 304 Not Modified", true, 304 );
+		header( $batcache->get_server_protocol() . " 304 Not Modified", true, 304 );
 		die;
 	}
 
