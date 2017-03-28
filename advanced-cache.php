@@ -69,7 +69,7 @@ class batcache {
 
 	var $cancel = false; // Change this to cancel the output buffer. Use batcache_cancel();
 
-    var $skip_cookies = array( 'wp', 'wordpress', 'comment_author' ); // Names of cookies (or prefixes) to skip
+	var $skip_cookies = array( 'wp', 'wordpress', 'comment_author' ); // Names of cookies (or prefixes) to skip
 	var $noskip_cookies = array( 'wordpress_test_cookie' ); // Names of cookies - if they exist and the cache would normally be bypassed, don't bypass it
 
 	var $query = '';
@@ -190,7 +190,7 @@ class batcache {
 		$this->cache = array(
 			'output' => $output,
 			'time' => isset( $_SERVER['REQUEST_TIME'] ) ? $_SERVER['REQUEST_TIME'] : time(),
-			'timer' => $this->timer_stop( false, 3 ),
+			'duration' => $this->timer_stop( false, 3 ),
 			'headers' => array(),
 			'status_header' => $this->status_header,
 			'redirect_status' => $this->redirect_status,
@@ -277,12 +277,12 @@ class batcache {
 	}
 
 	function add_debug_just_cached() {
-		$generation = $this->cache['timer'];
+		$duration = $this->cache['duration'];
 		$bytes = strlen( serialize( $this->cache ) );
 		$html = <<<HTML
 <!--
-	generated in $generation seconds
-	$bytes bytes batcached for {$this->max_age} seconds
+	Generated in $duration seconds.
+	$bytes bytes batcached for {$this->max_age} seconds.
 -->
 
 HTML;
@@ -291,15 +291,14 @@ HTML;
 
 	function add_debug_from_cache() {
 		$seconds_ago = time() - $this->cache['time'];
-		$generation = $this->cache['timer'];
+		$duration = $this->cache['duration'];
 		$serving = $this->timer_stop( false, 3 );
-		$expires = $this->cache['max_age'] - time() + $this->cache['time'];
+		$expiration = $this->cache['max_age'] - time() + $this->cache['time'];
 		$html = <<<HTML
 <!--
-	generated $seconds_ago seconds ago
-	generated in $generation seconds
-	served from batcache in $serving seconds
-	expires in $expires seconds
+	Generated $seconds_ago seconds ago in $duration seconds.
+	Served from batcache in $serving seconds.
+	Expires in $expiration seconds.
 -->
 
 HTML;
