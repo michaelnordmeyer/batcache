@@ -8,6 +8,24 @@ if ( ! function_exists( 'batcache_stats' ) ) {
 	function batcache_stats( $name, $value, $num = 1, $today = FALSE, $hour = FALSE ) { }
 }
 
+// Only cache HEAD and GET requests.
+if ( isset( $_SERVER['REQUEST_METHOD'] ) && ! in_array( $_SERVER['REQUEST_METHOD'], array( 'GET', 'HEAD' ) ) ) {
+	return;
+}
+
+// Never batcache interactive scripts or API endpoints.
+if ( in_array(
+		basename( $_SERVER['SCRIPT_FILENAME'] ),
+		array(
+			'wp-app.php',
+			'xmlrpc.php',
+			'wp-cron.php',
+		) ) )
+	return;
+
+// Never batcache WP javascript generators
+if ( strstr( $_SERVER['SCRIPT_FILENAME'], 'wp-includes/js' ) )
+	return;
 
 function batcache_cancel() {
 	global $batcache;
@@ -344,25 +362,6 @@ $batcache = new batcache( $batcache );
 
 if ( ! defined( 'WP_CONTENT_DIR' ) )
 	return;
-
-// Never batcache interactive scripts or API endpoints.
-if ( in_array(
-		basename( $_SERVER['SCRIPT_FILENAME'] ),
-		array(
-			'wp-app.php',
-			'xmlrpc.php',
-			'wp-cron.php',
-		) ) )
-	return;
-
-// Never batcache WP javascript generators
-if ( strstr( $_SERVER['SCRIPT_FILENAME'], 'wp-includes/js' ) )
-	return;
-
-// Only cache HEAD and GET requests.
-if ( ( isset( $_SERVER['REQUEST_METHOD'] ) && !in_array( $_SERVER['REQUEST_METHOD'], array( 'GET', 'HEAD' ) ) ) ) {
-	return;
-}
 
 // Never batcache when cookies indicate a cache-exempt visitor.
 if ( is_array( $_COOKIE ) && ! empty( $_COOKIE ) ) {
