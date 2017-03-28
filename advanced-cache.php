@@ -294,7 +294,7 @@ class batcache {
 	function generate_keys() {
 		// ksort($this->keys); // uncomment this when traffic is slow
 		$this->key = md5( serialize( $this->keys ) );
-		$this->req_key = $this->key . '_reqs';
+		$this->request_key = $this->key . '_requests';
 	}
 
 	function add_debug_just_cached() {
@@ -421,9 +421,9 @@ if ( isset( $_SERVER['QUERY_STRING'] ) )
 	parse_str( $_SERVER['QUERY_STRING'], $batcache->query );
 
 $batcache->keys = array(
-	'host' => $_SERVER['HTTP_HOST'],
 	'method' => $_SERVER['REQUEST_METHOD'],
-	'path' => ( $batcache->pos = strpos($_SERVER['REQUEST_URI'], '?') ) ? substr($_SERVER['REQUEST_URI'], 0, $batcache->pos) : $_SERVER['REQUEST_URI'],
+	'host' => $_SERVER['HTTP_HOST'],
+	'path' => ( $batcache->pos = strpos( $_SERVER['REQUEST_URI'], '?' ) ) ? substr( $_SERVER['REQUEST_URI'], 0, $batcache->pos ) : $_SERVER['REQUEST_URI'],
 	'query' => $batcache->query,
 	'extra' => $batcache->unique,
     'ssl' => $batcache->is_ssl()
