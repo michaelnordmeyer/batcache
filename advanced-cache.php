@@ -74,6 +74,9 @@ class batcache {
 
 	var $headers = array(); // Add headers here as name=>value or name=>array(values). These will be sent with every response from the cache.
 
+	var $status_header;
+	var $status_code;
+
 	var $cache_redirects = false; // Set true to enable redirect caching.
 	var $redirect_status = false; // This is set to the response code during a redirect.
 	var $redirect_location = false; // This is set to the redirect location.
