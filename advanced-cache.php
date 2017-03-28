@@ -1,6 +1,9 @@
 <?php
 // nananananananananananananananana BATCACHE!!!
 
+if ( ! defined( 'WP_CONTENT_DIR' ) )
+	return;
+
 if ( is_readable( dirname( __FILE__ ) . '/batcache-stats.php' ) )
 	require_once dirname( __FILE__ ) . '/batcache-stats.php';
 
@@ -63,7 +66,7 @@ class batcache {
 
 	var $remote  =    0; // Zero disables sending buffers to remote datacenters (req/sec is never sent)
 
-	var $times   =    2; // Only batcache a page after it is accessed this many times... (two or more)
+	var $times   =    2; // Only batcache a page after it is accessed this many times... (0 to ignore this and use batcache immediately)
 	var $seconds =  120; // ...in this many seconds (zero to ignore this and use batcache immediately)
 
 	var $group = 'batcache'; // Name of memcached group. You can simulate a cache flush by changing this.
@@ -94,8 +97,8 @@ class batcache {
 	var $noskip_cookies = array( 'wordpress_test_cookie' ); // Names of cookies - if they exist and the cache would normally be bypassed, don't bypass it
 
 	var $query = '';
-	var $genlock = false;
-	var $do = false;
+	var $generation_lock = false;
+	var $cache_response = false; // We have to cache the page
 
 	function __construct( $settings ) {
         if ( is_array( $settings ) )
@@ -186,21 +189,21 @@ class batcache {
 		// Remember, $wp_object_cache was clobbered in wp-settings.php so we have to repeat this.
 		$this->configure_groups();
 
-		if ( $this->cancel !== false ) {
-			wp_cache_delete( "{$this->url_key}_genlock", $this->group );
+		if ( $this->cancel === true ) {
+			wp_cache_delete( "{$this->url_key}_generation_lock", $this->group );
 			return $output;
 		}
 
 		// Do not batcache blank pages unless they are HTTP redirects
-		$output = trim($output);
-		if ( $output === '' && ( !$this->redirect_status || !$this->redirect_location ) ) {
-			wp_cache_delete( "{$this->url_key}_genlock", $this->group );
+		$output = trim( $output );
+		if ( $output === '' && ( ! $this->redirect_status || ! $this->redirect_location ) ) {
+			wp_cache_delete( "{$this->url_key}_generation_lock", $this->group );
 			return;
 		}
 
 		// Do not cache 5xx responses
 		if ( isset( $this->status_code ) && intval( $this->status_code / 100 ) == 5 ) {
-			wp_cache_delete( "{$this->url_key}_genlock", $this->group );
+			wp_cache_delete( "{$this->url_key}_generation_lock", $this->group );
 			return $output;
 		}
 
@@ -232,7 +235,7 @@ class batcache {
 		foreach ( $this->cache['headers'] as $header => $values ) {
 			// Do not cache if cookies were set
 			if ( strtolower( $header ) === 'set-cookie' ) {
-				wp_cache_delete( "{$this->url_key}_genlock", $this->group );
+				wp_cache_delete( "{$this->url_key}_generation_lock", $this->group );
 				return $output;
 			}
 
@@ -245,8 +248,8 @@ class batcache {
 
 		wp_cache_set( $this->key, $this->cache, $this->group, $this->max_age + $this->seconds + 30 );
 
-		// Unlock regeneration
-		wp_cache_delete( "{$this->url_key}_genlock", $this->group );
+		// Unlock generation
+		wp_cache_delete( "{$this->url_key}_generation_lock", $this->group );
 
 		if ( $this->cache_control ) {
 			// Don't clobber Last-Modified header if already set, e.g. by WP::send_headers()
@@ -363,7 +366,8 @@ global $batcache;
 // Pass in the global variable which may be an array of settings to override defaults.
 $batcache = new batcache( $batcache );
 
-if ( ! defined( 'WP_CONTENT_DIR' ) )
+// Disabled
+if ( $batcache->max_age == 0 )
 	return;
 
 // Never batcache when cookies indicate a cache-exempt visitor.
@@ -405,10 +409,6 @@ if ( include_once( 'plugins/searchterm-highlighter.php' ) && referrer_has_search
 	return;
 */
 
-// Disabled
-if ( $batcache->max_age < 1 )
-	return;
-
 // Make sure we can increment. If not, turn off the traffic sensor.
 if ( ! method_exists( $GLOBALS['wp_object_cache'], 'incr' ) )
 	$batcache->times = 0;
@@ -440,42 +440,57 @@ $batcache->generate_keys();
 // Get the batcache
 $batcache->cache = wp_cache_get( $batcache->key, $batcache->group );
 
-if ( isset( $batcache->cache['version'] ) && $batcache->cache['version'] != $batcache->url_version ) {
-	// Always refresh the cache if a newer version is available.
-	$batcache->do = true;
-} else if ( $batcache->seconds < 1 || $batcache->times < 2 ) {
-	// Are we only caching frequently-requested pages?
-	$batcache->do = true;
-} else {
-	// No batcache item found, or ready to sample traffic again at the end of the batcache life?
-	if ( !is_array($batcache->cache) || time() >= $batcache->cache['time'] + $batcache->max_age - $batcache->seconds ) {
-		wp_cache_add( $batcache->request_key, 0, $batcache->group );
-		$batcache->requests = wp_cache_incr( $batcache->request_key, 1, $batcache->group );
+// Refresh the cache
+if (
+    // If page is not cached
+    ! is_array( $batcache->cache ) ||
+    // or cached page has expired
+    time() >= $batcache->cache['time'] + $batcache->max_age - $batcache->seconds ||
+    // or a newer version is available
+    ( isset( $batcache->cache['version'] ) && $batcache->cache['version'] != $batcache->url_version ) ) {
+        
+    if ( $batcache->seconds < 1 || $batcache->times < 2 ) {
+    	// Settings mean always cache.
+    	$batcache->cache_response = true;
+    } else {
+        // Implicitly adds key only if the key hasn't been cached before
+        wp_cache_add( $batcache->request_key, 0, $batcache->group );
+    	$batcache->requests = wp_cache_incr( $batcache->request_key, 1, $batcache->group );
 
-		if ( $batcache->requests >= $batcache->times &&
-			time() >= $batcache->cache['time'] + $batcache->cache['max_age']
-		) {
-			wp_cache_delete( $batcache->request_key, $batcache->group );
-			$batcache->do = true;
-		} else {
-			$batcache->do = false;
-		}
-	}
+    	if ( $batcache->requests >= $batcache->times ) {
+            // If access threshold is met or exceeded and cached page has expired
+    		wp_cache_delete( $batcache->request_key, $batcache->group );
+    		$batcache->cache_response = true;
+    	}
+    }
 }
 
 // Obtain cache generation lock
-if ( $batcache->do )
-	$batcache->genlock = wp_cache_add( "{$batcache->url_key}_genlock", 1, $batcache->group, 10 );
+if ( $batcache->cache_response )
+	$batcache->generation_lock = wp_cache_add( "{$batcache->url_key}_generation_lock", 1, $batcache->group, 10) ;
 
-if ( isset( $batcache->cache['time'] ) && // We have cache
-	! $batcache->genlock &&            // We have not obtained cache regeneration lock
-	(
-		time() < $batcache->cache['time'] + $batcache->cache['max_age'] || // Batcached page that hasn't expired ||
-		( $batcache->do && $batcache->use_stale )                          // Regenerating it in another request and can use stale cache
-	)
-) {
-	// Issue redirect if cached and enabled
-	if ( $batcache->cache['redirect_status'] && $batcache->cache['redirect_location'] && $batcache->cache_redirects ) {
+if ( $batcache->generation_lock ) {
+    // We have obtained cache generation lock and will generate the cache for this response
+    
+    // WordPress 4.7 changes how filters are hooked. Since WordPress 4.6 add_filter can be used in advanced-cache.php. Previous behaviour is kept for backwards compatability with WP < 4.6
+    if ( function_exists( 'add_filter' ) ) {
+    	add_filter( 'status_header', array( &$batcache, 'status_header' ), 10, 2 );
+    	add_filter( 'wp_redirect_status', array( &$batcache, 'redirect_status' ), 10, 2 );
+    } else {
+    	$wp_filter['status_header'][10]['batcache'] = array( 'function' => array( &$batcache, 'status_header' ), 'accepted_args' => 2 );
+    	$wp_filter['wp_redirect_status'][10]['batcache'] = array( 'function' => array( &$batcache, 'redirect_status' ), 'accepted_args' => 2 );
+    }
+
+    ob_start( array( &$batcache, 'ob' ) );
+} else {
+    // Cache is being regenerated in another request and we can't use stale cache
+    if ( $batcache->cache_response && ! $batcache->use_stale ) {
+        // Response will be generated but not cached
+        return;
+    }
+    
+	// Issue redirect if enabled and cached
+	if ( $batcache->cache_redirects && $batcache->cache['redirect_status'] && $batcache->cache['redirect_location'] ) {
 		$status = $batcache->cache['redirect_status'];
 		$location = $batcache->cache['redirect_location'];
 		// From vars.php
@@ -549,21 +564,3 @@ if ( isset( $batcache->cache['time'] ) && // We have cache
 	// Have you ever heard a death rattle before?
 	die( $batcache->cache['output'] );
 }
-
-// Didn't meet the minimum condition?
-if ( ! $batcache->do || ! $batcache->genlock )
-	return;
-
-//WordPress 4.7 changes how filters are hooked. Since WordPress 4.6 add_filter can be used in advanced-cache.php. Previous behaviour is kept for backwards compatability with WP < 4.6
-if ( function_exists( 'add_filter' ) ) {
-	add_filter( 'status_header', array( &$batcache, 'status_header' ), 10, 2 );
-	add_filter( 'wp_redirect_status', array( &$batcache, 'redirect_status' ), 10, 2 );
-} else {
-	$wp_filter['status_header'][10]['batcache'] = array( 'function' => array(&$batcache, 'status_header'), 'accepted_args' => 2 );
-	$wp_filter['wp_redirect_status'][10]['batcache'] = array( 'function' => array(&$batcache, 'redirect_status'), 'accepted_args' => 2 );
-}
-
-ob_start( array( &$batcache, 'ob' ) );
-
-// It is safer to omit the final PHP closing tag.
-
